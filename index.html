@@ -592,7 +592,8 @@
     if (window.RECAPTCHA_SITE_KEY && !/^PASTE/.test(window.RECAPTCHA_SITE_KEY)) {
       try {
         const AC = await import(FB + "firebase-app-check.js");
-        AC.initializeAppCheck(app, { provider: new AC.ReCaptchaV3Provider(window.RECAPTCHA_SITE_KEY), isTokenAutoRefreshEnabled: true });
+        cloud.appCheckInst = AC.initializeAppCheck(app, { provider: new AC.ReCaptchaV3Provider(window.RECAPTCHA_SITE_KEY), isTokenAutoRefreshEnabled: true });
+        cloud.AC = AC;
         cloud.appCheck = true;
       } catch (e) {}
     }
@@ -1001,6 +1002,8 @@
   async function getModel() {
     if (aiModel) return aiModel;
     if (!cloud.appCheck) { const e = new Error("setup"); e.code = "setup"; throw e; }
+    // make sure App Check actually works before calling the AI (otherwise it can hang)
+    await withTimeout(cloud.AC.getToken(cloud.appCheckInst, false), 8000, "appcheck-timeout");
     const M = await import(FB + "firebase-ai.js");
     const ai = M.getAI(cloud.app, { backend: new M.GoogleAIBackend() });
     aiModel = M.getGenerativeModel(ai, {
@@ -1010,6 +1013,9 @@
     return aiModel;
   }
 
+  function withTimeout(p, ms, code) {
+    return Promise.race([p, new Promise((_, rej) => setTimeout(() => { const e = new Error(code); e.code = code; rej(e); }, ms))]);
+  }
   function loadImage(file) {
     return new Promise((res, rej) => {
       const url = URL.createObjectURL(file);
@@ -1209,7 +1215,7 @@ Rules:
       if (cloud.on && cloud.appCheck && !aiBroken) {
         try {
           const model = await getModel();
-          const result = await model.generateContent([scanPrompt(), { inlineData: { data: base64, mimeType: "image/jpeg" } }]);
+          const result = await withTimeout(model.generateContent([scanPrompt(), { inlineData: { data: base64, mimeType: "image/jpeg" } }]), 30000, "ai-timeout");
           items = parseScan(result.response.text()); scanMode = "ai";
         } catch (e) {
           console.warn("Gemini scan unavailable, reading on device instead:", e);
