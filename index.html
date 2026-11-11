@@ -337,7 +337,7 @@
 </div>
 
 <div class="fabs">
-  <button class="fab2" id="scanBtn" aria-label="Scan a screenshot" title="Scan a screenshot or receipt">📷</button>
+  <button class="fab2 on" id="scanBtn" aria-label="Scan a screenshot" title="Scan a screenshot or receipt">📷</button>
   <button class="fab" id="addBtn"><span>+</span> Add</button>
 </div>
 <input type="file" id="scanFile" accept="image/*" hidden>
@@ -355,7 +355,7 @@
       <input id="amount" inputmode="decimal" placeholder="0.00" aria-label="Amount">
     </div>
     <div class="err" id="err"></div>
-    <button type="button" class="scan-link" id="scanLink">📷 Fill in from a screenshot</button>
+    <button type="button" class="scan-link on" id="scanLink">📷 Fill in from a screenshot</button>
     <div class="field-label">Category</div>
     <div class="cats" id="catPicker"></div>
     <div class="row2">
@@ -648,7 +648,6 @@
         cloud.on = false; cloud.uid = null;
         state.expenses = []; state.settings = { budgetCents: 0, currency: "HK$" };
         $("acctGroup").hidden = true;
-        $("scanBtn").classList.remove("on"); $("scanLink").classList.remove("on");
         render(); showAuth(false); return;
       }
       $("auth").classList.remove("on");
@@ -1073,6 +1072,7 @@ Rules:
   function scanErrorMsg(e) {
     if (SCAN_ERRORS[e && e.code]) return SCAN_ERRORS[e.code];
     if (e && e.message === "image") return SCAN_ERRORS.image;
+    if (e && e.message === "ocr-load") return "Couldn't load the screenshot reader. Check your internet connection and try again.";
     const m = String((e && (e.message || e.code)) || "");
     if (/app.?check|attestation|recaptcha/i.test(m)) return "App Check blocked the request: check the reCAPTCHA keys and that this website's domain is added to them.";
     if (/not.?found|404|model/i.test(m)) return "The AI model name isn't available. Change AI_MODEL at the top of index.html to a current Gemini Flash model.";
@@ -1082,21 +1082,142 @@ Rules:
     return "Couldn't read that screenshot. Try again, or add it by hand.";
   }
 
-  let scanItems = [];
+  // ---- on-device reading (no setup needed; used when Gemini isn't available) ----
+  let ocrWorker = null, aiBroken = false;
+  function loadScript(src) {
+    return new Promise((res, rej) => { const sc = document.createElement("script"); sc.src = src; sc.onload = res; sc.onerror = () => rej(new Error("ocr-load")); document.head.append(sc); });
+  }
+  async function getOcr(onProgress) {
+    if (ocrWorker) return ocrWorker;
+    if (!window.Tesseract) await loadScript("https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js");
+    ocrWorker = await window.Tesseract.createWorker("eng", 1, {
+      logger: m => { if (m && typeof m.progress === "number" && onProgress) onProgress(m.status || "", m.progress); },
+    });
+    return ocrWorker;
+  }
+  async function ocrCanvas(file) {
+    const { img, url } = await loadImage(file);
+    let w = img.naturalWidth, h = img.naturalHeight;
+    const k = Math.min(w < 1000 ? 2 : 1, 2400 / w, 6000 / h);
+    const c = document.createElement("canvas");
+    c.width = Math.round(w * k); c.height = Math.round(h * k);
+    const g = c.getContext("2d");
+    g.drawImage(img, 0, 0, c.width, c.height);
+    const d = g.getImageData(0, 0, c.width, c.height), p = d.data;
+    let sum = 0;
+    for (let i = 0; i < p.length; i += 4) { const y = 0.299 * p[i] + 0.587 * p[i + 1] + 0.114 * p[i + 2]; p[i] = p[i + 1] = p[i + 2] = y; sum += y; }
+    if (sum / (p.length / 4) < 128) for (let i = 0; i < p.length; i += 4) { p[i] = p[i + 1] = p[i + 2] = 255 - p[i]; } // dark mode → light
+    g.putImageData(d, 0, 0);
+    URL.revokeObjectURL(url);
+    return c;
+  }
+
+  const MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, sept: 9, oct: 10, nov: 11, dec: 12 };
+  function findDate(text) {
+    const t = today(), Y = Number(t.slice(0, 4));
+    const ok = (y, m, d) => {
+      if (y < 100) y += 2000;
+      if (!(m >= 1 && m <= 12 && d >= 1 && d <= 31)) return null;
+      let s = y + "-" + pad(m) + "-" + pad(d);
+      return s <= t ? s : null;
+    };
+    let m, r;
+    const tries = [
+      [/(20\d{2})[-\/.年](\d{1,2})[-\/.月](\d{1,2})/, x => ok(+x[1], +x[2], +x[3])],
+      [/\b(\d{1,2})[\/.-](\d{1,2})[\/.-](20\d{2}|\d{2})\b/, x => ok(+x[3], +x[2], +x[1]) || ok(+x[3], +x[1], +x[2])],
+      [/\b(\d{1,2})\s*(jan|feb|mar|apr|may|jun|jul|aug|sept?|oct|nov|dec)[a-z]*\.?,?\s*(20\d{2})?/i, x => ok(x[3] ? +x[3] : Y, MONTHS[x[2].toLowerCase()], +x[1]) || ok(Y - 1, MONTHS[x[2].toLowerCase()], +x[1])],
+      [/\b(jan|feb|mar|apr|may|jun|jul|aug|sept?|oct|nov|dec)[a-z]*\.?\s*(\d{1,2}),?\s*(20\d{2})?/i, x => ok(x[3] ? +x[3] : Y, MONTHS[x[1].toLowerCase()], +x[2]) || ok(Y - 1, MONTHS[x[1].toLowerCase()], +x[2])],
+    ];
+    for (const [re, f] of tries) { m = text.match(re); if (m && (r = f(m))) return r; }
+    if (/\btoday\b|今天|今日/i.test(text)) return t;
+    if (/\byesterday\b|昨天|昨日/i.test(text)) { const d = new Date(); d.setDate(d.getDate() - 1); return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
+    return t;
+  }
+  function findAmount(lines) {
+    const num = /(?:HK\$|HKD|\$)?\s*-?\s*(\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d+\.\d{2}|\d+)(?!\s*%)/gi;
+    const strong = /total|amount|paid|payment|grand|net|subtotal|charge|debit|spent|總|合計|付款|金額|實付|消費/i;
+    const skip = /balance|remaining|stored value|available|credit limit|餘額|餘值|change|找贖|找續|cash|tender|points|積分|reward|\bqty\b|tel|phone|no\.|#|ref|card|卡號|time|時間/i;
+    const cands = [];
+    lines.forEach((line, i) => {
+      if (skip.test(line) && !strong.test(line)) return;
+      for (const m of line.matchAll(num)) {
+        const raw = m[0], v = parseFloat(m[1].replace(/,/g, ""));
+        if (!(v > 0 && v < 100000)) continue;
+        const hasCur = /HK\$|HKD|\$/i.test(raw), hasDec = /\.\d{2}/.test(m[1]);
+        if (!hasCur && !hasDec) continue;            // plain integers are usually not money
+        if (/^(19|20)\d{2}$/.test(m[1])) continue;    // years
+        let score = (hasCur ? 2 : 0) + (hasDec ? 1 : 0) + (strong.test(line) ? 4 : 0) + (/sub\s*total/i.test(line) ? -2 : 0) + (/^\s*-/.test(raw) || line.slice(Math.max(0, m.index - 2), m.index).includes("-") ? 2 : 0);
+        cands.push({ v, score, i });
+      }
+    });
+    if (!cands.length) return 0;
+    cands.sort((a, b) => b.score - a.score || b.v - a.v);
+    return Math.round(cands[0].v * 100);
+  }
+  const CAT_WORDS = [
+    ["food", /restaurant|cafe|café|coffee|starbucks|pacific|tea|bakery|mcdonald|kfc|burger|pizza|sushi|ramen|noodle|rice|canteen|dining|kitchen|bbq|congee|foodpanda|deliveroo|keeta|wellcome|park.?n.?shop|7-eleven|circle k|fusion|aeon|market|snack|drink|meal|lunch|dinner|breakfast|餐|飯|麵|茶|咖啡|美心|大家樂|大快活/i],
+    ["transport", /mtr|kmb|citybus|bus|minibus|taxi|uber|ferry|tram|parking|petrol|shell|caltex|esso|sinopec|octopus\s*car|transport|港鐵|巴士|的士|小巴/i],
+    ["bills", /csl|smartone|\b3hk\b|hkt|china mobile|clp|hk electric|towngas|water|wsd|netflix|spotify|apple\.com|icloud|google one|youtube|disney|broadband|subscription|rent|insurance|電費|水費|煤氣/i],
+    ["study", /book|stationery|print|copy|hkust|course|tuition|commercial press|joint publishing|eslite|udemy|coursera|文具|書/i],
+    ["health", /pharmacy|watsons|mannings|clinic|hospital|dental|doctor|medical|gym|fitness|藥|診所|醫/i],
+    ["fun", /cinema|movie|steam|playstation|nintendo|game|karaoke|ktv|neway|concert|ticket|bowling|戲院|遊戲/i],
+    ["shopping", /uniqlo|h&m|zara|ikea|taobao|amazon|hktvmall|shopee|mall|store|shop|fashion|muji|daiso|price\.com|fortress|broadway|百貨/i],
+  ];
+  function guessCat(text) { for (const [id, re] of CAT_WORDS) if (re.test(text)) return id; return "other"; }
+  function findMerchant(lines) {
+    for (const l of lines) {
+      const s = l.replace(/[|_~=*<>]+/g, " ").replace(/\s+/g, " ").trim();
+      if (s.length < 3 || s.length > 40) continue;
+      if (!/[a-z\u4e00-\u9fff]{3,}/i.test(s)) continue;
+      if (/^(octopus|payme|alipay\s*hk|alipayhk|wechat pay|fps|bank|hsbc|hang seng|boc|standard chartered|citibank|mox|za bank|apple pay|google pay)\b/i.test(s)) continue;
+      if (/\d{1,2}:\d{2}|receipt|invoice|tax|transaction|payment|details|successful|completed|paid|total|amount|status|^back$|^done$|today|yesterday/i.test(s)) continue;
+      return s.slice(0, 40);
+    }
+    return "";
+  }
+  function parseOcrText(text) {
+    const lines = String(text || "").split(/\n+/).map(l => l.trim()).filter(Boolean);
+    const cents = findAmount(lines);
+    if (!cents) return [];
+    const merchant = findMerchant(lines);
+    return [{ cents, date: findDate(text), note: merchant, cat: guessCat(text), currency: "" }];
+  }
+  async function scanOnDevice(file, status) {
+    const [canvas, worker] = await Promise.all([ocrCanvas(file), getOcr((st, p) => {
+      status.textContent = /recogniz/i.test(st) ? "Reading… " + Math.round(p * 100) + "%" : "Loading the reader (first time only)… " + Math.round(p * 100) + "%";
+    })]);
+    status.textContent = "Reading…";
+    const { data } = await worker.recognize(canvas);
+    return parseOcrText(data && data.text);
+  }
+
+  let scanItems = [], scanMode = "ai";
   async function scanFile(file) {
     if (!file || !/^image\//.test(file.type || "image/")) { toast("That's not an image"); return; }
     closeSheet();
     $("scanTitle").textContent = "Reading screenshot…";
     $("scanThumb").hidden = true;
     const body = $("scanBody"); body.textContent = "";
-    const st = el("div", "scan-status"); st.append(el("div", "spinner"), el("div", null, "Finding the amount, date and shop…"));
+    const st = el("div", "scan-status"); const msg = el("div", null, "Finding the amount, date and shop…");
+    st.append(el("div", "spinner"), msg);
     body.append(st);
     showSheet($("scanSheet"));
     try {
-      const [{ url, base64 }, model] = await Promise.all([prepImage(file), getModel()]);
+      const { url, base64 } = await prepImage(file);
       $("scanThumb").src = url; $("scanThumb").hidden = false;
-      const result = await model.generateContent([scanPrompt(), { inlineData: { data: base64, mimeType: "image/jpeg" } }]);
-      scanItems = parseScan(result.response.text()).map(x => Object.assign(x, { on: true }));
+      let items = null;
+      if (cloud.on && cloud.appCheck && !aiBroken) {
+        try {
+          const model = await getModel();
+          const result = await model.generateContent([scanPrompt(), { inlineData: { data: base64, mimeType: "image/jpeg" } }]);
+          items = parseScan(result.response.text()); scanMode = "ai";
+        } catch (e) {
+          console.warn("Gemini scan unavailable, reading on device instead:", e);
+          if (navigator.onLine) aiBroken = true;
+        }
+      }
+      if (!items) { items = await scanOnDevice(file, msg); scanMode = "device"; }
+      scanItems = items.map(x => Object.assign(x, { on: true }));
       renderScan();
     } catch (e) {
       console.error(e);
@@ -1117,6 +1238,7 @@ Rules:
       return;
     }
     $("scanTitle").textContent = n === 1 ? "Found 1 expense" : "Found " + n + " expenses";
+    if (scanMode === "device") body.append(el("div", "hint", "Read on your device — please check the amount, shop and category before adding."));
     const cur = state.settings.currency.replace(/[^A-Z]/gi, "").toUpperCase();
     scanItems.forEach((x, i) => {
       const row = el("div", "scan-item" + (x.on ? "" : " off"));
@@ -1161,16 +1283,14 @@ Rules:
   $("scanFile").onchange = e => { const f = e.target.files && e.target.files[0]; e.target.value = ""; if (f) scanFile(f); };
   // laptop: paste (Ctrl/Cmd+V) or drag a screenshot onto the page
   document.addEventListener("paste", e => {
-    if (!cloud.on) return;
     const f = [...(e.clipboardData ? e.clipboardData.files : [])].find(f => /^image\//.test(f.type));
     if (f) { e.preventDefault(); scanFile(f); }
   });
   let dragDepth = 0;
-  document.addEventListener("dragenter", e => { if (cloud.on && e.dataTransfer && [...e.dataTransfer.types].includes("Files")) { dragDepth++; $("dropHint").classList.add("on"); } });
+  document.addEventListener("dragenter", e => { if (e.dataTransfer && [...e.dataTransfer.types].includes("Files")) { dragDepth++; $("dropHint").classList.add("on"); } });
   document.addEventListener("dragleave", () => { dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) $("dropHint").classList.remove("on"); });
-  document.addEventListener("dragover", e => { if (cloud.on) e.preventDefault(); });
+  document.addEventListener("dragover", e => { e.preventDefault(); });
   document.addEventListener("drop", e => {
-    if (!cloud.on) return;
     e.preventDefault(); dragDepth = 0; $("dropHint").classList.remove("on");
     const f = [...e.dataTransfer.files].find(f => /^image\//.test(f.type));
     if (f) scanFile(f);
