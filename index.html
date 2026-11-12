@@ -277,7 +277,7 @@
   // For Gemini screenshot scanning: Firebase App Check with a reCAPTCHA Enterprise (Fraud Defense) key ID
   window.RECAPTCHA_SITE_KEY = "PASTE_RECAPTCHA_SITE_KEY";
   // Gemini model used to read screenshots. If Google retires it, change this name.
-  window.AI_MODEL = "gemini-3.8-flash";
+  window.AI_MODELS = ["gemini-3.5-flash", "gemini-flash-lite-latest"];
 </script>
 </head>
 <body>
@@ -998,18 +998,18 @@
   };
 
   // ---------- screenshot scanning (Gemini via Firebase AI Logic) ----------
-  let aiModel = null;
-  async function getModel() {
-    if (aiModel) return aiModel;
+  let aiModels = null;
+  async function getModels() {
+    if (aiModels) return aiModels;
     // App Check is optional until Firebase starts enforcing it; if it's configured, make sure it works first
     if (cloud.appCheck) await withTimeout(cloud.AC.getToken(cloud.appCheckInst, false), 8000, "appcheck-timeout");
     const M = await import(FB + "firebase-ai.js");
     const ai = M.getAI(cloud.app, { backend: new M.GoogleAIBackend() });
-    aiModel = M.getGenerativeModel(ai, {
-      model: window.AI_MODEL || "gemini-3.8-flash",
+    aiModels = (window.AI_MODELS || ["gemini-3.5-flash"]).map(name => M.getGenerativeModel(ai, {
+      model: name,
       generationConfig: { responseMimeType: "application/json", temperature: 0 },
-    });
-    return aiModel;
+    }));
+    return aiModels;
   }
 
   function withTimeout(p, ms, code) {
@@ -1213,12 +1213,21 @@ Rules:
       let items = null;
       if (cloud.on && !aiBroken) {
         try {
-          const model = await getModel();
-          const result = await withTimeout(model.generateContent([scanPrompt(), { inlineData: { data: base64, mimeType: "image/jpeg" } }]), 30000, "ai-timeout");
-          items = parseScan(result.response.text()); scanMode = "ai";
+          const models = await getModels();
+          let lastErr = null;
+          for (const model of models) {
+            try {
+              msg.textContent = "Reading with Gemini…";
+              const result = await withTimeout(model.generateContent([scanPrompt(), { inlineData: { data: base64, mimeType: "image/jpeg" } }]), 20000, "ai-timeout");
+              items = parseScan(result.response.text()); scanMode = "ai"; lastErr = null;
+              break;
+            } catch (e) { lastErr = e; console.warn("Gemini model failed, trying next:", e); }
+          }
+          if (lastErr) throw lastErr;
         } catch (e) {
           console.warn("Gemini scan unavailable, reading on device instead:", e);
-          if (navigator.onLine) aiBroken = true;
+          // stop trying Gemini this visit only for setup problems, not for busy/timeouts
+          if (/app.?check|recaptcha|403|permission|not.?enabled|api.?key/i.test(String((e && (e.code || "")) + " " + (e && e.message || "")))) aiBroken = true;
         }
       }
       if (!items) { items = await scanOnDevice(file, msg); scanMode = "device"; }

@@ -61,4 +61,4 @@ The site is live in about a minute.
 ## If something goes wrong
 - *"This website isn't allowed yet"*: redo step 2.4.
 - *"App Check blocked the request"*: check that the domain in step 5.1 matches your site, and that the site key is pasted in step 6.
-- *"The AI model name isn't available"*: Google retired the model. Change `AI_MODEL` near the top of `index.html` to the current Gemini Flash model listed in Firebase AI Logic.
+- *"The AI model name isn't available"*: Google retired the model. Change `AI_MODELS` near the top of `index.html` to current Gemini Flash models.
