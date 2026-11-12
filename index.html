@@ -1001,9 +1001,8 @@
   let aiModel = null;
   async function getModel() {
     if (aiModel) return aiModel;
-    if (!cloud.appCheck) { const e = new Error("setup"); e.code = "setup"; throw e; }
-    // make sure App Check actually works before calling the AI (otherwise it can hang)
-    await withTimeout(cloud.AC.getToken(cloud.appCheckInst, false), 8000, "appcheck-timeout");
+    // App Check is optional until Firebase starts enforcing it; if it's configured, make sure it works first
+    if (cloud.appCheck) await withTimeout(cloud.AC.getToken(cloud.appCheckInst, false), 8000, "appcheck-timeout");
     const M = await import(FB + "firebase-ai.js");
     const ai = M.getAI(cloud.app, { backend: new M.GoogleAIBackend() });
     aiModel = M.getGenerativeModel(ai, {
@@ -1212,7 +1211,7 @@ Rules:
       const { url, base64 } = await prepImage(file);
       $("scanThumb").src = url; $("scanThumb").hidden = false;
       let items = null;
-      if (cloud.on && cloud.appCheck && !aiBroken) {
+      if (cloud.on && !aiBroken) {
         try {
           const model = await getModel();
           const result = await withTimeout(model.generateContent([scanPrompt(), { inlineData: { data: base64, mimeType: "image/jpeg" } }]), 30000, "ai-timeout");
