@@ -172,6 +172,11 @@
   .sheet h3 { margin: 0 0 14px; font-size: 18px; display: flex; justify-content: space-between; align-items: center; }
   .amount-field { display: flex; align-items: baseline; gap: 6px; border-bottom: 2px solid var(--grid); padding-bottom: 6px; margin-bottom: 16px; }
   .amount-field:focus-within { border-color: var(--ink); }
+  .amount-field.ok, .amount-field.ok:focus-within { border-color: var(--good); }
+  .amount-field.over, .amount-field.over:focus-within { border-color: var(--critical); }
+  .day-hint { display: flex; align-items: baseline; gap: 7px; font-size: 13px; color: var(--ink-2); margin: -6px 0 14px; }
+  .day-hint i { width: 9px; height: 9px; border-radius: 50%; flex: none; transform: translateY(-1px); }
+  .day-hint b { color: var(--ink); font-weight: 600; }
   .amount-field .cur { font-size: 22px; color: var(--muted); font-weight: 600; }
   .amount-field input { border: 0; outline: none; background: none; font-size: 40px; font-weight: 700; width: 100%; letter-spacing: -0.02em; }
   .field-label { font-size: 12px; color: var(--ink-2); font-weight: 600; margin: 0 0 6px; text-transform: uppercase; letter-spacing: .04em; }
@@ -362,6 +367,7 @@
       <input id="amount" inputmode="decimal" placeholder="0.00" aria-label="Amount">
     </div>
     <div class="err" id="err"></div>
+    <div class="day-hint" id="dayHint" hidden></div>
     <button type="button" class="scan-link on" id="scanLink">📷 Fill in from a screenshot</button>
     <div class="field-label">Category</div>
     <div class="cats" id="catPicker"></div>
@@ -928,6 +934,30 @@
     });
   }
 
+  function updateDayHint() {
+    const box = $("dayHint"), field = document.querySelector(".amount-field");
+    const date = $("date").value, budget = state.settings.budgetCents;
+    field.classList.remove("ok", "over");
+    if (!budget || !/^\d{4}-\d{2}-\d{2}$/.test(date)) { box.hidden = true; return; }
+    const daily = budget / daysIn(date.slice(0, 7));
+    const spent = state.expenses.filter(x => x.date === date && x.id !== state.editingId).reduce((t, x) => t + (x.cents || 0), 0);
+    const amt = parseMoney($("amount").value) || 0;
+    const after = spent + amt, over = after > daily;
+    box.textContent = "";
+    const dot = el("i"); dot.style.background = over ? "var(--critical)" : "var(--good)";
+    const label = el("b", null, over ? "Over" : "OK");
+    const rest = amt
+      ? " · " + dayLabel(date) + " would be " + money(after) + " of " + money(Math.round(daily), { round: true }) + (over ? " (over by " + money(Math.round(after - daily)) + ")" : " (" + money(Math.round(daily - after)) + " left)")
+      : " · " + dayLabel(date) + ": " + money(spent) + " spent of " + money(Math.round(daily), { round: true }) + " daily budget";
+    const txt = el("span"); txt.append(label, rest);
+    box.append(dot, txt);
+    box.hidden = false;
+    if (amt) field.classList.add(over ? "over" : "ok");
+  }
+  $("amount").addEventListener("input", updateDayHint);
+  $("date").addEventListener("input", updateDayHint);
+  $("date").addEventListener("change", updateDayHint);
+
   function openSheet(exp) {
     state.editingId = exp ? exp.id : null;
     $("sheetTitle").textContent = exp ? "Edit expense" : "New expense";
@@ -940,6 +970,7 @@
     $("deleteBtn").hidden = !exp;
     $("err").textContent = "";
     buildPicker();
+    updateDayHint();
     showSheet($("sheet"));
     if (!exp) setTimeout(() => $("amount").focus(), 260);
   }
