@@ -26,12 +26,10 @@ Replace `jerelue1` below with your GitHub username. Your site will be at `https:
 2. Choose **Gemini Developer API** (the no-cost option) and follow the prompts to enable it.
 
 ## 5. Turn on App Check (Firebase requires it for the AI)
-1. Go to <https://www.google.com/recaptcha/admin/create>.
-   - Label: `expense-tracker` · Type: **Score based (v3)** · Domains: `jerelue1.github.io` → **Submit**.
-   - Keep the page open. It shows a **site key** and a **secret key**.
-2. Back in Firebase: **Build → App Check → Apps** → your web app → **reCAPTCHA** → paste the **secret key** → **Save**.
-3. In App Check → **APIs** → **Firebase AI Logic** → **Enforce**.
-4. Copy the **site key**. It goes into `index.html` (next step).
+1. Enable the reCAPTCHA (Fraud Defense) API: <https://console.cloud.google.com/apis/library/recaptchaenterprise.googleapis.com?project=expense-20da1>. Free up to 10,000 checks a month.
+2. Create a key: <https://console.cloud.google.com/security/recaptcha/create?project=expense-20da1>. Choose Website, domain `jerelue1.github.io`, and no checkbox challenge. Copy the **key ID**.
+3. Firebase → **App Check → Apps** → your web app → **reCAPTCHA Enterprise** → paste the key ID → **Save**.
+4. Put the key ID in `index.html` as `RECAPTCHA_SITE_KEY` (step 6).
 
 ## 6. Paste your keys into index.html
 Near the top of `index.html`, replace the `PASTE_…` values:
@@ -45,10 +43,10 @@ window.FIREBASE_CONFIG = {
   messagingSenderId: "…",
   appId: "…"
 };
-window.RECAPTCHA_SITE_KEY = "…";   // the reCAPTCHA *site* key, not the secret key
+window.RECAPTCHA_SITE_KEY = "…";   // the reCAPTCHA Enterprise key ID
 ```
 
-These values are safe to put in a public repo. The database rules and App Check are what protect your data. **Never** put the reCAPTCHA *secret* key in this file.
+These values are safe to put in a public repo. The database rules and App Check are what protect your data.
 
 ## 7. Publish on GitHub Pages
 Repo **Settings → Pages** → Source: **Deploy from a branch** → Branch `main`, folder `/ (root)` → **Save**.

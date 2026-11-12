@@ -274,7 +274,7 @@
     messagingSenderId: "160689677856",
     appId: "1:160689677856:web:b6f0535843c1c1acbd7e45"
   };
-  // For screenshot scanning (Firebase App Check → reCAPTCHA v3 site key)
+  // For Gemini screenshot scanning: Firebase App Check with a reCAPTCHA Enterprise (Fraud Defense) key ID
   window.RECAPTCHA_SITE_KEY = "PASTE_RECAPTCHA_SITE_KEY";
   // Gemini model used to read screenshots. If Google retires it, change this name.
   window.AI_MODEL = "gemini-3.8-flash";
@@ -592,7 +592,7 @@
     if (window.RECAPTCHA_SITE_KEY && !/^PASTE/.test(window.RECAPTCHA_SITE_KEY)) {
       try {
         const AC = await import(FB + "firebase-app-check.js");
-        cloud.appCheckInst = AC.initializeAppCheck(app, { provider: new AC.ReCaptchaV3Provider(window.RECAPTCHA_SITE_KEY), isTokenAutoRefreshEnabled: true });
+        cloud.appCheckInst = AC.initializeAppCheck(app, { provider: new AC.ReCaptchaEnterpriseProvider(window.RECAPTCHA_SITE_KEY), isTokenAutoRefreshEnabled: true });
         cloud.AC = AC;
         cloud.appCheck = true;
       } catch (e) {}
