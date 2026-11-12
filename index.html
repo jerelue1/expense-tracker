@@ -104,6 +104,12 @@
     transform: translate(-50%, -100%); opacity: 0; transition: opacity .1s; top: 0; left: 0;
   }
   .tip.on { opacity: 1; }
+  .chart-legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--ink-2); margin-top: 10px; }
+  .chart-legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .chart-legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+  .chart-legend i.line { width: 14px; height: 0; border-top: 2px dashed var(--ink-2); border-radius: 0; }
+  .day-flag { display: inline-flex; align-items: center; gap: 5px; margin-left: 8px; font-weight: 600; text-transform: none; letter-spacing: 0; }
+  .day-flag i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
   .axis-labels { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-top: 4px; font-variant-numeric: tabular-nums; }
 
   /* Breakdown */
@@ -314,6 +320,7 @@
       <div class="tip" id="tip"></div>
     </div>
     <div class="axis-labels" id="axis"></div>
+    <div class="chart-legend" id="chartLegend" hidden></div>
   </section>
 
   <section class="card">
@@ -761,7 +768,8 @@
     const n = daysIn(m);
     const totals = new Array(n).fill(0);
     items.forEach(x => { const d = Number(x.date.slice(8, 10)); if (d >= 1 && d <= n) totals[d - 1] += x.cents || 0; });
-    const max = Math.max(...totals, 1);
+    const dailyBudget = state.settings.budgetCents ? state.settings.budgetCents / n : 0;
+    const max = Math.max(...totals, dailyBudget * 1.15, 1);
     const W = 600, H = 130, top = 8, bottom = 4;
     svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
     svg.setAttribute("preserveAspectRatio", "none");
@@ -776,7 +784,7 @@
     svg.append(base);
 
     const todayDay = m === ym(new Date()) ? new Date().getDate() : 0;
-    const barColor = css("--c1");
+    const barColorFor = v => !dailyBudget ? css("--c1") : (v > dailyBudget ? css("--critical") : css("--good"));
     const bars = [];
     totals.forEach((v, i) => {
       const h = v > 0 ? Math.max(3, (v / max) * plotH) : 0;
@@ -785,7 +793,7 @@
       const p = document.createElementNS(NS, "path");
       // rounded top, square at baseline
       p.setAttribute("d", h ? `M${x},${H - bottom} V${y + r} Q${x},${y} ${x + r},${y} H${x + bw - r} Q${x + bw},${y} ${x + bw},${y + r} V${H - bottom} Z` : "");
-      p.setAttribute("fill", barColor);
+      p.setAttribute("fill", barColorFor(v));
       if (todayDay && i + 1 > todayDay) p.setAttribute("opacity", 0);
       svg.append(p); bars.push(p);
     });
@@ -799,7 +807,7 @@
         bars.forEach((b, j) => b.style.opacity = j === i ? 1 : 0.45);
         const [Y, M] = m.split("-").map(Number);
         const d = new Date(Y, M - 1, i + 1).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
-        tip.textContent = d + " · " + money(v);
+        tip.textContent = d + " · " + money(v) + (dailyBudget && v > 0 ? (v > dailyBudget ? " · over by " + money(Math.round(v - dailyBudget)) : " · within budget") : "");
         const rect = wrap.getBoundingClientRect();
         let px = ((i + 0.5) / n) * rect.width;
         px = Math.max(60, Math.min(rect.width - 60, px));
@@ -816,6 +824,24 @@
 
     const axis = $("axis"); axis.textContent = "";
     [1, Math.ceil(n / 2), n].forEach(d => axis.append(el("span", null, d)));
+
+    // daily budget line + legend
+    const legend = $("chartLegend"); legend.textContent = "";
+    legend.hidden = !dailyBudget;
+    if (dailyBudget) {
+      const y = H - bottom - (dailyBudget / max) * plotH;
+      const ln = document.createElementNS(NS, "line");
+      ln.setAttribute("x1", 0); ln.setAttribute("x2", W); ln.setAttribute("y1", y); ln.setAttribute("y2", y);
+      ln.setAttribute("stroke", css("--ink-2")); ln.setAttribute("stroke-width", 1.5); ln.setAttribute("stroke-dasharray", "5 4");
+      ln.setAttribute("vector-effect", "non-scaling-stroke"); ln.setAttribute("pointer-events", "none");
+      svg.insertBefore(ln, svg.querySelector("rect"));
+      const item = (cls, color, text) => { const sp = el("span"); const i = el("i", cls); if (color) i.style.background = color; sp.append(i, text); return sp; };
+      legend.append(
+        item("", "var(--good)", "Within daily budget"),
+        item("", "var(--critical)", "Over daily budget"),
+        item("line", "", "Daily budget " + money(Math.round(dailyBudget), { round: true })),
+      );
+    }
     svg.setAttribute("aria-label", "Daily spending. Highest day: " + money(max === 1 ? 0 : max));
   }
 
@@ -861,7 +887,15 @@
       if (x.date !== curDay) {
         curDay = x.date;
         const h = el("div", "day-head");
-        h.append(el("span", null, dayLabel(x.date)), el("span", null, money(dayTotals[x.date])));
+        const right = el("span", null, money(dayTotals[x.date]));
+        const db = state.settings.budgetCents ? state.settings.budgetCents / daysIn(x.date.slice(0, 7)) : 0;
+        if (db && !state.filterCat && !state.query.trim()) {
+          const over = dayTotals[x.date] > db;
+          const f = el("span", "day-flag"); const dot = el("i"); dot.style.background = over ? "var(--critical)" : "var(--good)";
+          f.append(dot, over ? "Over" : "OK"); f.title = (over ? "Over" : "Within") + " daily budget of " + money(Math.round(db));
+          right.append(f);
+        }
+        h.append(el("span", null, dayLabel(x.date)), right);
         list.append(h);
       }
       const c = CAT[x.cat] || CAT.other;
