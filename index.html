@@ -720,7 +720,17 @@
 
     const isCurrent = m === ym(new Date());
     const daysSoFar = isCurrent ? new Date().getDate() : daysIn(m);
-    $("avgDay").textContent = money(Math.round(total / daysSoFar), { round: true });
+    const avg = Math.round(total / daysSoFar);
+    const avgEl = $("avgDay");
+    avgEl.textContent = money(avg, { round: true });
+    avgEl.style.color = ""; avgEl.title = "";
+    if (state.settings.budgetCents && items.length) {
+      const daily = state.settings.budgetCents / daysIn(m);
+      const over = avg > daily;
+      avgEl.style.color = over ? "var(--critical)" : "var(--good-text)";
+      avgEl.textContent = (over ? "▲ " : "✓ ") + money(avg, { round: true });
+      avgEl.title = (over ? "Above" : "Within") + " your daily budget of " + money(Math.round(daily), { round: true });
+    }
 
     const prevTotal = monthExpenses(shiftMonth(m, -1)).reduce((s, x) => s + (x.cents || 0), 0);
     const vs = $("vsLast"); vs.textContent = "";
