@@ -24,7 +24,7 @@
     --ring: rgba(11,11,11,0.10);
     --btn: #0b0b0b;
     --btn-ink: #ffffff;
-    --good: #0ca30c; --good-text: #006300;
+    --good: #0ca30c; --good-text: #006300; --warning-text: #a35f00;
     --warning: #fab219;
     --critical: #d03b3b;
     --c1: #2a78d6; --c2: #eb6834; --c3: #1baf7a; --c4: #eda100;
@@ -45,7 +45,7 @@
       --ring: rgba(255,255,255,0.10);
       --btn: #f0efec;
       --btn-ink: #0b0b0b;
-      --good-text: #0ca30c;
+      --good-text: #0ca30c; --warning-text: #fab219;
       --c1: #3987e5; --c2: #d95926; --c3: #199e70; --c4: #c98500;
       --c5: #d55181; --c6: #008300; --c7: #9085e9; --c8: #e66767;
       --shadow: none;
@@ -725,11 +725,10 @@
     avgEl.textContent = money(avg, { round: true });
     avgEl.style.color = ""; avgEl.title = "";
     if (state.settings.budgetCents && items.length) {
-      const daily = state.settings.budgetCents / daysIn(m);
-      const over = avg > daily;
-      avgEl.style.color = over ? "var(--critical)" : "var(--good-text)";
-      avgEl.textContent = (over ? "▲ " : "✓ ") + money(avg, { round: true });
-      avgEl.title = (over ? "Above" : "Within") + " your daily budget of " + money(Math.round(daily), { round: true });
+      const stt = budgetStatus(total, daysSoFar);
+      avgEl.style.color = stt.text;
+      avgEl.textContent = (stt.diff > 0 ? "▲ " : "✓ ") + money(avg, { round: true });
+      avgEl.title = stt.label + " · daily budget " + money(Math.round(stt.daily), { round: true });
     }
 
     const prevTotal = monthExpenses(shiftMonth(m, -1)).reduce((s, x) => s + (x.cents || 0), 0);
@@ -747,6 +746,21 @@
     renderList(items);
   }
 
+  // Status from average spend per day vs daily budget (monthly budget ÷ days in month)
+  function budgetStatus(total, daysSoFar) {
+    const b = state.settings.budgetCents;
+    if (!b) return null;
+    const daily = b / daysIn(state.month);
+    const avg = daysSoFar ? total / daysSoFar : 0;
+    const diff = avg - daily;
+    let level;
+    if (total > b) level = { key: "over", label: "Over budget", icon: "!", color: "var(--critical)", text: "var(--critical)" };
+    else if (diff <= 0) level = { key: "good", label: "On track", icon: "✓", color: "var(--good)", text: "var(--good-text)" };
+    else if (diff <= 1000) level = { key: "warn", label: "Warning", icon: "!", color: "var(--warning)", text: "var(--warning-text)" };
+    else level = { key: "bad", label: "Needs attention", icon: "!", color: "var(--critical)", text: "var(--critical)" };
+    return Object.assign(level, { daily, avg, diff });
+  }
+
   function renderBudget(total, isCurrent, daysSoFar) {
     const box = $("budgetBox"); box.textContent = "";
     const b = state.settings.budgetCents;
@@ -758,9 +772,8 @@
     }
     const ratio = total / b;
     const meter = el("div", "meter"); const fill = el("div");
-    let color = "var(--good)", label = "On track", icon = "✓";
-    if (ratio > 1) { color = "var(--critical)"; label = "Over budget"; icon = "!"; }
-    else if (ratio >= 0.8) { color = "var(--warning)"; label = "Close to limit"; icon = "!"; }
+    const stt = budgetStatus(total, daysSoFar);
+    const color = stt.color, label = stt.label, icon = stt.icon;
     fill.style.background = color;
     meter.append(fill); box.append(meter);
     requestAnimationFrame(() => { fill.style.width = Math.min(100, ratio * 100) + "%"; });
@@ -772,6 +785,10 @@
     const dot = el("span", "dot", icon); dot.style.background = color; if (color === "var(--warning)") dot.style.color = "#0b0b0b";
     st.append(dot, label);
     row.append(st); box.append(row);
+    const cmp = el("div", "hint");
+    cmp.append("Avg " + money(Math.round(stt.avg), { round: true }) + " / day vs daily budget " + money(Math.round(stt.daily), { round: true }));
+    if (stt.diff > 0) cmp.append(" · " + money(Math.round(stt.diff)) + " over per day");
+    box.append(cmp);
     if (isCurrent && left > 0) {
       const remainingDays = daysIn(state.month) - daysSoFar + 1;
       const hint = el("div", "hint", "≈ " + money(Math.floor(left / remainingDays), { round: true }) + " per day for the rest of the month");
